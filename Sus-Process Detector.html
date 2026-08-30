@@ -1,116 +1,1055 @@
-import win32serviceutil
-import win32service
-import win32event
-import servicemanager
-import psutil
-import time
-import traceback
-from datetime import datetime
-from colorama import Fore, Style, init
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suspicious Process Detector</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-init(autoreset=True)
+:root{
+  --bg:#0A0B10;
+  --panel:#12141C;
+  --panel-2:#0E0F16;
+  --line:#232636;
+  --line-soft:#181A26;
+  --text:#E9EAF3;
+  --muted:#8A8FA8;
+  --muted-2:#5C6079;
+  --safe:#4FD69C;
+  --safe-dim:#4FD69C2a;
+  --warn:#E8A23F;
+  --warn-dim:#E8A23F2a;
+  --danger:#E8536E;
+  --danger-dim:#E8536E2a;
+  --pulse:#8B7FE8;
+  --pulse-dim:#8B7FE82a;
+  --font-display:'Chakra Petch',sans-serif;
+  --font-body:'IBM Plex Sans',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
 
-# ---------------------------------
-# SETTINGS
-# ---------------------------------
-CPU_THRESHOLD = 70
-MEMORY_THRESHOLD = 300
-CHECK_INTERVAL = 2
-LOG_FILE = r"C:\ThreatMonitor\threat_log.txt"
-SUSPICIOUS_KEYWORDS = [
-    "mimikatz",
-    "meterpreter",
-    "powershell -enc",
-    "nc.exe",
-    "netcat",
-    "unknown",
-    "hack",
-    "exploit",
-]
+*{box-sizing:border-box; margin:0; padding:0;}
 
-# ---------------------------------
-# LOGGING
-# ---------------------------------
-def log_event(message):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {message}"
+body{
+  background:
+    radial-gradient(circle at 10% -10%, #8B7FE814 0%, transparent 42%),
+    radial-gradient(circle at 100% 10%, #4FD69C0f 0%, transparent 38%),
+    var(--bg);
+  color:var(--text);
+  font-family:var(--font-body);
+  line-height:1.5;
+  min-height:100vh;
+  padding-bottom:80px;
+}
 
-    with open(LOG_FILE, "a", encoding="utf-8", errors="ignore") as f:
-        f.write(line + "\n")
+::selection{ background:var(--pulse); color:#0B0810; }
 
-# ---------------------------------
-# Threat Monitor Loop
-# ---------------------------------
-def monitor_system():
-    log_event("Threat Monitoring Service Started...")
+.scanlines{
+  position:fixed; inset:0; pointer-events:none; z-index:50;
+  background:repeating-linear-gradient(0deg, rgba(255,255,255,0.011) 0px, rgba(255,255,255,0.011) 1px, transparent 1px, transparent 3px);
+  mix-blend-mode:overlay;
+}
 
-    # Warm-up CPU counters
-    for p in psutil.process_iter():
-        try: p.cpu_percent(interval=None)
-        except: pass
+/* ---------- header ---------- */
+header{ position:relative; border-bottom:1px solid var(--line); padding:28px 5vw 34px; overflow:hidden; }
+.top-row{ display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:26px; }
+.brand{
+  display:flex; align-items:center; gap:10px; font-family:var(--font-mono); font-size:12px;
+  letter-spacing:.14em; color:var(--muted); text-transform:uppercase;
+}
+.brand .dot{
+  width:8px; height:8px; border-radius:50%; background:var(--pulse); box-shadow:0 0 0 3px var(--pulse-dim);
+  animation:pulseDot 1.6s ease-in-out infinite;
+}
+@keyframes pulseDot{ 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:.4; transform:scale(.7);} }
+.clock{ font-family:var(--font-mono); font-size:12px; color:var(--muted-2); letter-spacing:.08em; }
 
-    while True:
-        try:
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info']):
-                try:
-                    name = proc.info.get('name', "unknown")
-                    pid = proc.pid
-                    cmdline = " ".join(proc.info.get('cmdline') or [])
-                    cpu = proc.cpu_percent(interval=0.1)
-                    mem_info = proc.info.get('memory_info')
-                    mem_mb = mem_info.rss / (1024*1024) if mem_info else 0
+.hero-title{
+  font-family:var(--font-display); font-weight:700; font-size:clamp(32px, 5vw, 58px);
+  letter-spacing:-0.005em; line-height:1.04; max-width:820px;
+}
+.hero-title .line2{ color:var(--pulse); }
+.hero-sub{ margin-top:14px; max-width:580px; color:var(--muted); font-size:15px; }
 
-                    if cpu > CPU_THRESHOLD:
-                        log_event(f"CPU Spike: {name} ({pid}) using {cpu}%")
+.ekg-wrap{
+  position:absolute; right:0; top:10px; width:420px; height:150px; opacity:.75; pointer-events:none;
+}
+@media (max-width:980px){ .ekg-wrap{ display:none; } }
+.ekg-wrap svg{ width:100%; height:100%; }
+.ekg-grid line{ stroke:var(--line-soft); stroke-width:1; }
+.ekg-trace{
+  fill:none; stroke:var(--pulse); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
+  stroke-dasharray:900; stroke-dashoffset:900;
+  animation:draw 3.2s linear infinite;
+}
+@keyframes draw{ to{ stroke-dashoffset:-900; } }
 
-                    if mem_mb > MEMORY_THRESHOLD:
-                        log_event(f"Memory Spike: {name} ({pid}) using {mem_mb:.2f} MB")
+/* ---------- layout ---------- */
+main{ max-width:1180px; margin:0 auto; padding:0 5vw; }
+section{ padding:46px 0; border-bottom:1px solid var(--line-soft); }
+section:last-of-type{ border-bottom:none; }
 
-                    combined = f"{name} {cmdline}".lower()
-                    for kw in SUSPICIOUS_KEYWORDS:
-                        if kw.lower() in combined:
-                            log_event(f"Suspicious Process: {name} ({pid}) matched '{kw}'")
+.eyebrow{
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--pulse); margin-bottom:8px; display:flex; align-items:center; gap:8px;
+}
+.eyebrow::before{ content:''; width:16px; height:1px; background:var(--pulse); }
+h2{ font-family:var(--font-display); font-weight:600; font-size:25px; margin-bottom:6px; }
+.section-sub{ color:var(--muted); font-size:14px; max-width:660px; margin-bottom:26px; }
 
-                except Exception:
-                    continue
+.panel{ background:linear-gradient(180deg, var(--panel), var(--panel-2)); border:1px solid var(--line); border-radius:10px; }
 
-            time.sleep(CHECK_INTERVAL)
+.import-note{
+  font-size:12.5px; color:var(--muted); background:var(--pulse-dim); border:1px solid var(--line);
+  border-radius:6px; padding:10px 12px; line-height:1.55; margin-bottom:16px;
+}
 
-        except Exception as e:
-            log_event("ERROR: " + str(e))
-            log_event(traceback.format_exc())
-            time.sleep(2)
+.cmd-tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+.cmd-tab{
+  background:#0C0D14; border:1px solid var(--line); color:var(--muted); font-family:var(--font-mono);
+  font-size:12px; padding:7px 16px; border-radius:20px; transition:all .15s;
+}
+.cmd-tab.active{ border-color:var(--pulse); color:var(--pulse); background:var(--pulse-dim); }
+.cmd-box{
+  display:flex; align-items:center; justify-content:space-between; gap:12px; background:#0C0D14;
+  border:1px solid var(--line); border-radius:6px; padding:12px 14px;
+}
+.cmd-box code{ font-family:var(--font-mono); font-size:13px; color:var(--text); overflow-x:auto; white-space:nowrap; flex:1; }
 
-# ---------------------------------
-# Windows Service Class
-# ---------------------------------
-class ThreatService(win32serviceutil.ServiceFramework):
-    _svc_name_ = "ThreatDetectionService"
-    _svc_display_name_ = "Threat Detection Monitor"
-    _svc_description_ = "Monitors suspicious processes, spikes, and logs threats."
+.form-grid{ display:grid; grid-template-columns:repeat(4, 1fr); gap:16px; padding:24px; }
+@media (max-width:820px){ .form-grid{ grid-template-columns:repeat(2,1fr); } }
+.field{ display:flex; flex-direction:column; gap:6px; }
+.field.span-2{ grid-column:span 2; }
+.field label{ font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted-2); }
+.field input[type=text], .field select, .field textarea{
+  background:#0C0D14; border:1px solid var(--line); color:var(--text); padding:10px 12px; border-radius:6px;
+  font-family:var(--font-mono); font-size:13.5px; outline:none; transition:border-color .15s;
+}
+.field textarea{ resize:vertical; }
 
-    def __init__(self, args):
-        win32serviceutil.ServiceFramework.__init__(self, args)
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.running = True
+.dropzone{
+  border:1.5px dashed var(--line); border-radius:8px; padding:22px; text-align:center;
+  display:flex; flex-direction:column; align-items:center; gap:6px; transition:border-color .15s, background .15s;
+}
+.dropzone.drag{ border-color:var(--pulse); background:var(--pulse-dim); }
+.dropzone .dz-icon{ font-size:20px; color:var(--muted-2); }
+.dropzone .dz-text{ font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:center; }
+.dropzone .hint code{ font-family:var(--font-mono); color:var(--muted); }
 
-    def SvcStop(self):
-        self.running = False
-        win32event.SetEvent(self.hWaitStop)
-        log_event("Threat Detection Service Stopped.")
+.kit-row td{ padding:0; border-bottom:1px solid var(--line-soft); background:#0D0E17; }
+.kit-box{ padding:16px 20px; display:flex; flex-direction:column; gap:8px; }
+.kit-section-label{
+  font-family:var(--font-mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--pulse); margin-top:6px;
+}
+.kit-section-label:first-child{ margin-top:0; }
+.kit-line{
+  display:grid; grid-template-columns:180px 1fr 32px; align-items:center; gap:10px;
+  background:#0C0D14; border:1px solid var(--line-soft); border-radius:6px; padding:8px 10px;
+}
+@media (max-width:820px){ .kit-line{ grid-template-columns:1fr; } }
+.kit-line .kit-label{ font-size:12px; color:var(--muted); }
+.kit-line code{ font-family:var(--font-mono); font-size:12px; color:var(--text); overflow-x:auto; white-space:nowrap; }
+.field input:focus, .field select:focus, .field textarea:focus{ border-color:var(--pulse); }
+.field input::placeholder, .field textarea::placeholder{ color:var(--muted-2); }
+.checkline{ display:flex; align-items:center; gap:8px; padding-top:8px; }
+.checkline input{ accent-color:var(--pulse); width:15px; height:15px; }
+.checkline label{ font-size:13px; color:var(--muted); }
 
-    def SvcDoRun(self):
-        log_event("Threat Detection Service Starting...")
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STARTED,
-            (self._svc_name_, "")
-        )
-        monitor_system()
+.form-actions{
+  display:flex; justify-content:space-between; align-items:center; padding:16px 24px;
+  border-top:1px solid var(--line-soft); flex-wrap:wrap; gap:12px;
+}
+.hint{ font-size:12px; color:var(--muted-2); }
+
+button{ font-family:var(--font-body); cursor:pointer; border:none; }
+.btn-primary{
+  background:var(--pulse); color:#0D0A1A; font-weight:600; font-size:13.5px; padding:11px 22px;
+  border-radius:6px; letter-spacing:.01em; transition:transform .12s, box-shadow .12s;
+}
+.btn-primary:hover{ transform:translateY(-1px); box-shadow:0 6px 18px -6px var(--pulse-dim); }
+.btn-ghost{
+  background:transparent; border:1px solid var(--line); color:var(--muted); padding:10px 18px;
+  border-radius:6px; font-size:13px; transition:border-color .15s, color .15s;
+}
+.btn-ghost:hover{ border-color:var(--muted); color:var(--text); }
+.btn-ghost.active{ border-color:var(--pulse); color:var(--pulse); }
+
+/* ---------- summary ---------- */
+.score-row{ display:grid; grid-template-columns:260px 1fr; gap:24px; }
+@media (max-width:820px){ .score-row{ grid-template-columns:1fr; } }
+.gauge-card{ background:linear-gradient(180deg, var(--panel), var(--panel-2)); border:1px solid var(--line); border-radius:10px; padding:26px; text-align:center; }
+.gauge-card .label{ font-family:var(--font-mono); font-size:11px; letter-spacing:.12em; color:var(--muted-2); text-transform:uppercase; margin-bottom:14px; }
+.gauge{ position:relative; width:180px; height:180px; margin:0 auto; }
+.gauge svg{ width:100%; height:100%; transform:rotate(-90deg); }
+.gauge-bg{ fill:none; stroke:var(--line); stroke-width:10; }
+.gauge-fg{ fill:none; stroke-width:10; stroke-linecap:round; transition:stroke-dashoffset .6s ease, stroke .3s; }
+.gauge-num{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.gauge-num .n{ font-family:var(--font-display); font-size:36px; font-weight:700; }
+.gauge-num .u{ font-family:var(--font-mono); font-size:10px; color:var(--muted-2); letter-spacing:.1em; }
+
+.stat-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; }
+@media (max-width:560px){ .stat-grid{ grid-template-columns:1fr; } }
+.stat-card{
+  background:linear-gradient(180deg, var(--panel), var(--panel-2)); border:1px solid var(--line);
+  border-radius:10px; padding:20px; display:flex; flex-direction:column; gap:10px; justify-content:space-between;
+}
+.stat-card .n{ font-family:var(--font-display); font-size:32px; font-weight:700; }
+.stat-card .l{ font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; color:var(--muted-2); text-transform:uppercase; }
+.stat-card.crit .n{ color:var(--danger); }
+.stat-card.warn .n{ color:var(--warn); }
+.stat-card.ok .n{ color:var(--safe); }
+.stat-bar{ height:3px; border-radius:3px; background:var(--line-soft); overflow:hidden; }
+.stat-bar i{ display:block; height:100%; }
+.stat-card.crit .stat-bar i{ background:var(--danger); }
+.stat-card.warn .stat-bar i{ background:var(--warn); }
+.stat-card.ok .stat-bar i{ background:var(--safe); }
+
+/* ---------- table ---------- */
+.table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+table{ width:100%; border-collapse:collapse; min-width:920px; }
+thead th{
+  text-align:left; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted-2); padding:14px 16px; background:var(--panel-2); border-bottom:1px solid var(--line);
+}
+tbody td{ padding:14px 16px; border-bottom:1px solid var(--line-soft); font-size:13px; vertical-align:top; }
+tbody tr:last-child td{ border-bottom:none; }
+tbody tr:hover{ background:#131523; }
+.proc-cell{ font-family:var(--font-mono); font-weight:600; }
+.proc-cell .badge-trust{
+  font-family:var(--font-mono); font-size:9.5px; color:var(--pulse); border:1px solid var(--pulse);
+  border-radius:20px; padding:1px 7px; margin-left:8px; letter-spacing:.06em;
+}
+.path-cell{ font-family:var(--font-mono); color:var(--muted); font-size:11.5px; max-width:260px; word-break:break-all; }
+.badge{
+  display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px;
+  padding:4px 10px; border-radius:20px; letter-spacing:.04em; white-space:nowrap;
+}
+.badge::before{ content:''; width:6px; height:6px; border-radius:50%; }
+.badge.crit{ background:var(--danger-dim); color:var(--danger); }
+.badge.crit::before{ background:var(--danger); }
+.badge.warn{ background:var(--warn-dim); color:var(--warn); }
+.badge.warn::before{ background:var(--warn); }
+.badge.ok{ background:var(--safe-dim); color:var(--safe); }
+.badge.ok::before{ background:var(--safe); }
+.row-actions{ display:flex; gap:8px; }
+.icon-btn{
+  background:transparent; border:1px solid var(--line); color:var(--muted-2); border-radius:6px;
+  width:28px; height:28px; font-size:13px; display:flex; align-items:center; justify-content:center;
+  transition:border-color .15s, color .15s;
+}
+.icon-btn:hover{ border-color:var(--danger); color:var(--danger); }
+.icon-btn.trusted{ border-color:var(--pulse); color:var(--pulse); }
+.icon-btn.copy:hover{ border-color:var(--pulse); color:var(--pulse); }
+.empty-row td{ text-align:center; color:var(--muted-2); font-size:13px; padding:40px 16px; font-family:var(--font-mono); }
+
+/* ---------- findings ---------- */
+.findings-list{ display:flex; flex-direction:column; gap:12px; }
+.finding{
+  display:grid; grid-template-columns:56px 1fr; gap:16px;
+  background:linear-gradient(180deg, var(--panel), var(--panel-2)); border:1px solid var(--line);
+  border-left:3px solid var(--muted-2); border-radius:8px; padding:18px 20px;
+}
+.finding.crit{ border-left-color:var(--danger); }
+.finding.warn{ border-left-color:var(--warn); }
+.finding.ok{ border-left-color:var(--safe); }
+.finding .sev{ font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; align-self:start; padding-top:2px; }
+.finding.crit .sev{ color:var(--danger); }
+.finding.warn .sev{ color:var(--warn); }
+.finding.ok .sev{ color:var(--safe); }
+.finding h4{ font-family:var(--font-display); font-size:15px; font-weight:600; margin-bottom:6px; }
+.finding p{ font-size:13.5px; color:var(--muted); margin-bottom:8px; }
+.finding .remediation{
+  font-size:12.5px; color:var(--text); background:#0C0D14; border:1px solid var(--line-soft);
+  border-radius:6px; padding:10px 12px; font-family:var(--font-mono); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+}
+.finding .remediation b{ color:var(--pulse); font-weight:600; }
+.finding .remediation span{ flex:1; }
+.finding .net-ref{ font-family:var(--font-mono); font-size:11px; color:var(--muted-2); margin-top:8px; }
+
+/* ---------- report ---------- */
+.report-actions{ display:flex; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+#reportOutput{
+  background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:28px 32px;
+  font-family:var(--font-mono); font-size:12.5px; line-height:1.7; color:var(--muted);
+  white-space:pre-wrap; max-height:560px; overflow-y:auto;
+}
+
+footer{
+  max-width:1180px; margin:0 auto; padding:30px 5vw 0; color:var(--muted-2); font-size:12px;
+  font-family:var(--font-mono); display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;
+}
+
+@media print{
+  header, .form-actions, .btn-ghost, .row-actions, #importSection, #addForm, .report-actions, .scanlines{ display:none !important; }
+  body{ background:#fff; color:#111; }
+  .panel, .stat-card, .gauge-card, .finding, .table-wrap{ border-color:#ccc !important; background:#fff !important; }
+}
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+
+<header>
+  <div class="ekg-wrap">
+    <svg viewBox="0 0 420 150">
+      <g class="ekg-grid">
+        <line x1="0" y1="30" x2="420" y2="30"/>
+        <line x1="0" y1="75" x2="420" y2="75"/>
+        <line x1="0" y1="120" x2="420" y2="120"/>
+      </g>
+      <path class="ekg-trace" d="M0,75 L40,75 L55,75 L65,40 L75,110 L85,20 L95,75 L120,75 L160,75 L175,75 L185,40 L195,110 L205,20 L215,75 L240,75 L280,75 L295,75 L305,40 L315,110 L325,20 L335,75 L420,75"/>
+    </svg>
+  </div>
+
+  <div class="top-row">
+    <div class="brand"><span class="dot"></span> PROC-DETECT / CONSOLE</div>
+    <div class="clock" id="clock">-- : -- : --</div>
+  </div>
+
+  <h1 class="hero-title">Suspicious Process<br><span class="line2">Detector.</span></h1>
+  <p class="hero-sub">Log every running process, score it against known anomaly patterns — masquerading system binaries, suspicious launch paths, living-off-the-land command lines — and get copy‑ready remediation commands for the ones worth acting on.</p>
+</header>
+
+<main>
+
+  <!-- IMPORT -->
+  <section id="importSection">
+    <div class="eyebrow">1 · Scan</div>
+    <h2>Check your running processes</h2>
+    <p class="section-sub">Run one command, paste (or drop) the result below — this tool does the rest.</p>
+
+    <div class="panel">
+      <div style="padding:22px 24px; display:flex; flex-direction:column; gap:14px;">
+        <div class="cmd-tabs" id="cmdTabs">
+          <button class="cmd-tab" data-os="windows">Windows</button>
+          <button class="cmd-tab" data-os="unix">macOS / Linux</button>
+        </div>
+        <div class="cmd-box">
+          <code id="cmdText">Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Csv -NoTypeInformation</code>
+          <button class="icon-btn" id="copyCmdBtn" title="Copy command">⧉</button>
+        </div>
+        <div class="hint" id="cmdHint">1. Copy this. 2. Run it in PowerShell. 3. Copy the full output it prints.</div>
+
+        <div class="field">
+          <label>Paste it here</label>
+          <textarea id="in-scanpaste" rows="7" placeholder="Paste here, then click Scan below…"></textarea>
+        </div>
+
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".csv,.txt,.log" style="display:none">
+          <div class="dz-icon">⇪</div>
+          <div class="dz-text">…or drop a saved scan file here, or <button class="btn-ghost" id="browseBtn" type="button" style="padding:4px 10px; font-size:12px;">browse</button></div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <span class="hint" id="importStatus">No need to pick a format — it's detected automatically.</span>
+        <button class="btn-primary" id="importBtn">Scan &amp; check</button>
+      </div>
+    </div>
+
+    <details id="addForm" style="margin-top:16px;">
+      <summary class="btn-ghost" style="display:inline-block; list-style:none; cursor:pointer;">+ Add a process by hand instead</summary>
+      <div class="panel" style="margin-top:14px;">
+        <div class="form-grid">
+          <div class="field">
+            <label>Process name</label>
+            <input type="text" id="in-name" placeholder="e.g. svchost.exe">
+          </div>
+          <div class="field">
+            <label>PID</label>
+            <input type="text" id="in-pid" placeholder="e.g. 4821">
+          </div>
+          <div class="field span-2">
+            <label>Executable path</label>
+            <input type="text" id="in-path" placeholder="e.g. C:\Windows\System32\svchost.exe">
+          </div>
+          <div class="field">
+            <label>Signature</label>
+            <select id="in-signed">
+              <option value="unknown" selected>Unknown</option>
+              <option value="signed">Signed / verified</option>
+              <option value="unsigned">Unsigned</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="checkline"><input type="checkbox" id="in-trusted"><label for="in-trusted">This one's known‑good</label></div>
+          </div>
+        </div>
+
+        <details style="padding:0 24px 20px;">
+          <summary style="cursor:pointer; font-family:var(--font-mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-2);">More fields (optional)</summary>
+          <div class="form-grid" style="padding:14px 0 0;">
+            <div class="field">
+              <label>Parent PID</label>
+              <input type="text" id="in-ppid" placeholder="e.g. 812">
+            </div>
+            <div class="field">
+              <label>CPU %</label>
+              <input type="text" id="in-cpu" placeholder="e.g. 12">
+            </div>
+            <div class="field">
+              <label>Memory (MB)</label>
+              <input type="text" id="in-mem" placeholder="e.g. 340">
+            </div>
+            <div class="field span-2">
+              <label>Command line</label>
+              <input type="text" id="in-cmdline" placeholder="e.g. powershell -enc SQBFAFgA...">
+            </div>
+            <div class="field">
+              <div class="checkline"><input type="checkbox" id="in-network"><label for="in-network">Has a network connection</label></div>
+            </div>
+            <div class="field">
+              <div class="checkline"><input type="checkbox" id="in-autostart"><label for="in-autostart">Starts automatically</label></div>
+            </div>
+          </div>
+        </details>
+
+        <div class="form-actions">
+          <span class="hint">That's all that's required — the rest can stay blank.</span>
+          <button class="btn-primary" id="addBtn">+ Add</button>
+        </div>
+      </div>
+    </details>
+  </section>
 
 
-if __name__ == "__main__":
-    win32serviceutil.HandleCommandLine(ThreatService)
+  <!-- RESULTS -->
+  <section>
+    <div class="eyebrow">2 · Results</div>
+    <h2>What was found</h2>
+    <p class="section-sub">Every process checked, with a risk score. ★ marks it known‑good, 🧰 shows exact commands to investigate and fix it.</p>
 
+    <div class="score-row" style="margin-bottom:28px;">
+      <div class="gauge-card">
+        <div class="label">Overall risk</div>
+        <div class="gauge">
+          <svg viewBox="0 0 180 180">
+            <circle class="gauge-bg" cx="90" cy="90" r="78"/>
+            <circle class="gauge-fg" id="gaugeFg" cx="90" cy="90" r="78" stroke="#8B7FE8" stroke-dasharray="490" stroke-dashoffset="490"/>
+          </svg>
+          <div class="gauge-num"><span class="n" id="gaugeNum">--</span><span class="u">/ 100</span></div>
+        </div>
+      </div>
 
-Review this code and add a button for ending the process.
+      <div class="stat-grid">
+        <div class="stat-card crit"><div><div class="l">Critical</div><div class="n" id="critCount">0</div></div><div class="stat-bar"><i id="critBar" style="width:0%"></i></div></div>
+        <div class="stat-card warn"><div><div class="l">Warnings</div><div class="n" id="warnCount">0</div></div><div class="stat-bar"><i id="warnBar" style="width:0%"></i></div></div>
+        <div class="stat-card ok"><div><div class="l">Clean</div><div class="n" id="okCount">0</div></div><div class="stat-bar"><i id="okBar" style="width:0%"></i></div></div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Process</th><th>PID / PPID</th><th>Path</th><th>Signature</th><th>CPU / Mem</th><th>Rating</th><th></th></tr>
+        </thead>
+        <tbody id="procTableBody">
+          <tr class="empty-row"><td colspan="7">Nothing checked yet — scan or add a process above.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section>
+    <div class="eyebrow">3 · Findings</div>
+    <h2>What to fix, and how</h2>
+    <p class="section-sub">Plain‑language explanations with exact commands, worst issues first. Commands are for
+      <button class="btn-ghost" id="remOsWin" style="padding:4px 12px; font-size:11px; margin:0 4px;">Windows</button>
+      <button class="btn-ghost" id="remOsUnix" style="padding:4px 12px; font-size:11px;">macOS / Linux</button>
+    </p>
+
+    <div class="findings-list" id="findingsList">
+      <div class="finding ok"><div class="sev">Info</div><div><h4>Nothing to show yet</h4><p>Scan or add processes above to see findings here.</p></div></div>
+    </div>
+  </section>
+
+  <!-- REPORT -->
+  <section>
+    <div class="eyebrow">4 · Report</div>
+    <h2>Save this for later</h2>
+    <p class="section-sub">Turn everything above into a report you can keep or hand off.</p>
+
+    <div class="report-actions">
+      <button class="btn-primary" id="genReportBtn">Generate report</button>
+      <button class="btn-ghost" id="downloadReportBtn">Download as .txt</button>
+      <button class="btn-ghost" id="printBtn">Print / save as PDF</button>
+    </div>
+
+    <div id="reportOutput">Click "Generate report" once you've checked your processes.</div>
+  </section>
+
+</main>
+
+<footer>
+  <span>PROC‑DETECT CONSOLE — runs entirely in your browser, no data leaves this page. No commands are ever executed automatically.</span>
+  <span id="footTimestamp">—</span>
+</footer>
+
+<script>
+(function(){
+  const state = { processes: [], remediationOS: 'windows', expanded: new Set() };
+
+  // ---- auto-detect OS so the person doesn't have to pick ----
+  const platformStr = (navigator.platform || navigator.userAgent || '');
+  const detectedOS = /win/i.test(platformStr) ? 'windows' : 'unix';
+  state.remediationOS = detectedOS;
+
+  // ---- clock ----
+  function tick(){
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toLocaleTimeString([], {hour12:false});
+    document.getElementById('footTimestamp').textContent = 'Session started ' + d.toLocaleString();
+  }
+  tick(); setInterval(tick, 1000);
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---- remediation OS toggle ----
+  document.getElementById('remOsWin').addEventListener('click', () => setRemOS('windows'));
+  document.getElementById('remOsUnix').addEventListener('click', () => setRemOS('unix'));
+  function setRemOS(os){
+    state.remediationOS = os;
+    document.getElementById('remOsWin').classList.toggle('active', os==='windows');
+    document.getElementById('remOsUnix').classList.toggle('active', os==='unix');
+    document.querySelectorAll('.cmd-tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-os')===os));
+    document.getElementById('cmdText').textContent = OS_COMMANDS[os].cmd;
+    document.getElementById('cmdHint').textContent = OS_COMMANDS[os].hint;
+    render();
+  }
+  function killCmd(pid){
+    return state.remediationOS === 'windows' ? 'taskkill /PID ' + pid + ' /F' : 'kill -9 ' + pid;
+  }
+  function copyText(text, btn){
+    const done = () => { const old = btn.textContent; btn.textContent='✓'; setTimeout(()=>btn.textContent=old, 1200); };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done).catch(done); }
+    else { done(); }
+  }
+
+  // ---- import: OS command reference ----
+  const OS_COMMANDS = {
+    windows: { cmd:'Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Csv -NoTypeInformation', hint:'1. Copy this. 2. Run it in PowerShell. 3. Copy the full output it prints.' },
+    unix:    { cmd:'ps -eo pid,ppid,pcpu,pmem,comm', hint:'1. Copy this. 2. Run it in Terminal. 3. Copy the full output it prints.' },
+  };
+  document.querySelectorAll('.cmd-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.cmd-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const os = tab.getAttribute('data-os');
+      document.getElementById('cmdText').textContent = OS_COMMANDS[os].cmd;
+      document.getElementById('cmdHint').textContent = OS_COMMANDS[os].hint;
+      setRemOS(os);
+    });
+  });
+  document.getElementById('copyCmdBtn').addEventListener('click', function(){ copyText(document.getElementById('cmdText').textContent, this); });
+
+  // sync everything to the auto-detected OS on first load
+  setRemOS(detectedOS);
+
+  // ---- CSV line parser (handles quoted fields) ----
+  function parseCSVLine(line){
+    const result = []; let cur='', inQuotes=false;
+    for(let i=0;i<line.length;i++){
+      const c = line[i];
+      if(inQuotes){
+        if(c === '"'){ if(line[i+1] === '"'){ cur+='"'; i++; } else { inQuotes=false; } }
+        else cur += c;
+      } else {
+        if(c === '"') inQuotes = true;
+        else if(c === ',') { result.push(cur); cur=''; }
+        else cur += c;
+      }
+    }
+    result.push(cur);
+    return result;
+  }
+
+  function parsePowerShellCSV(text){
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length && !/^#TYPE/i.test(l.trim()));
+    if(!lines.length) return [];
+    const header = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+    const idx = {
+      name: header.findIndex(h => h === 'name'),
+      pid: header.findIndex(h => h === 'processid'),
+      ppid: header.findIndex(h => h === 'parentprocessid'),
+      path: header.findIndex(h => h === 'executablepath'),
+      cmd: header.findIndex(h => h === 'commandline'),
+    };
+    const results = [];
+    for(let i=1;i<lines.length;i++){
+      const row = parseCSVLine(lines[i]);
+      if(row.length < 2) continue;
+      const name = idx.name>=0 ? row[idx.name] : '';
+      if(!name) continue;
+      results.push({
+        name: name.trim(),
+        pid: idx.pid>=0 ? row[idx.pid].trim() : '',
+        ppid: idx.ppid>=0 ? row[idx.ppid].trim() : '',
+        path: idx.path>=0 ? row[idx.path].trim() : '',
+        cmdline: idx.cmd>=0 ? row[idx.cmd].trim() : '',
+        signed: 'unknown', cpu: '', mem: '', network:false, autostart:false,
+      });
+    }
+    return results;
+  }
+
+  function parsePsEo(text){
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+    const results = [];
+    for(const raw of lines){
+      const line = raw.trim();
+      if(/^PID\b/i.test(line)) continue;
+      const m = line.match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(.+)$/);
+      if(m){
+        results.push({
+          name: m[5].trim(), pid: m[1], ppid: m[2], path: '', cmdline: '',
+          signed: 'unknown', cpu: m[3], mem: m[4], network:false, autostart:false,
+        });
+      }
+    }
+    return results;
+  }
+
+  function parseGenericCSV(text){
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const results = [];
+    for(const line of lines){
+      if(/^name\s*,/i.test(line)) continue;
+      const parts = parseCSVLine(line).map(p => p.trim());
+      if(parts.length < 2) continue;
+      const [name, pid, ppid, path, signed, cpu, mem, network, autostart, cmdline] = parts;
+      results.push({
+        name: name || '', pid: pid || '', ppid: ppid || '', path: path || '',
+        signed: (signed||'unknown').toLowerCase(), cpu: cpu||'', mem: mem||'',
+        network: /^y|true|1$/i.test(network||''), autostart: /^y|true|1$/i.test(autostart||''),
+        cmdline: cmdline || '',
+      });
+    }
+    return results;
+  }
+
+  function detectAndParse(text){
+    const firstLines = text.split(/\r?\n/).slice(0,3).join(' ');
+    if(/"Name"/i.test(firstLines) && /"ProcessId"/i.test(firstLines)) return { format:'PowerShell (Win32_Process)', rows: parsePowerShellCSV(text) };
+    const firstLine = (text.split(/\r?\n/).find(l => l.trim().length) || '');
+    if(/^\s*PID\b/i.test(firstLine) && /PPID/i.test(firstLine) || /^\s*\d+\s+\d+\s+[\d.]+\s+[\d.]+\s+\S/.test(firstLine)) {
+      return { format:'ps -eo', rows: parsePsEo(text) };
+    }
+    if(firstLine.split(',').length >= 2) return { format:'CSV', rows: parseGenericCSV(text) };
+    return { format:'CSV', rows: parseGenericCSV(text) };
+  }
+
+  function setImportStatus(msg, sev){
+    const el = document.getElementById('importStatus');
+    el.textContent = msg;
+    el.style.color = sev === 'ok' ? 'var(--safe)' : sev === 'crit' ? 'var(--danger)' : 'var(--muted)';
+  }
+
+  document.getElementById('importBtn').addEventListener('click', () => {
+    const text = document.getElementById('in-scanpaste').value;
+    if(!text.trim()){ setImportStatus('Paste some scan output first.', 'warn'); return; }
+    const { format, rows } = detectAndParse(text);
+    let added = 0, skipped = 0;
+    rows.forEach(r => {
+      if(!r.name) return;
+      const dup = state.processes.some(p => p.name.toLowerCase()===r.name.toLowerCase() && p.pid === r.pid);
+      if(dup){ skipped++; return; }
+      state.processes.push({
+        id: 'p'+Date.now()+Math.random().toString(16).slice(2),
+        name: r.name, pid: r.pid || '—', ppid: r.ppid || '',
+        path: r.path || '', signed: r.signed || 'unknown',
+        cpu: r.cpu || '', mem: r.mem || '', cmdline: r.cmdline || '',
+        network: !!r.network, autostart: !!r.autostart, trusted:false,
+      });
+      added++;
+    });
+    if(added===0 && skipped===0){
+      setImportStatus('Could not parse any processes (detected as ' + format + '). Check the format, or use the CSV layout instead.', 'crit');
+    } else {
+      setImportStatus('Imported ' + added + ' process' + (added===1?'':'es') + ' as ' + format + (skipped ? ', skipped ' + skipped + ' duplicate' + (skipped===1?'':'s') : '') + '.', 'ok');
+      render();
+      const results = document.getElementById('procTableBody');
+      if(results) results.closest('section').scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+  });
+
+  // ---- manual add ----
+  document.getElementById('addBtn').addEventListener('click', () => {
+    const name = document.getElementById('in-name').value.trim();
+    if(!name){ alert('Enter a process name before adding.'); return; }
+    state.processes.push({
+      id: 'p'+Date.now()+Math.random().toString(16).slice(2),
+      name,
+      pid: document.getElementById('in-pid').value.trim() || '—',
+      ppid: document.getElementById('in-ppid').value.trim(),
+      path: document.getElementById('in-path').value.trim(),
+      signed: document.getElementById('in-signed').value,
+      cpu: document.getElementById('in-cpu').value.trim(),
+      mem: document.getElementById('in-mem').value.trim(),
+      cmdline: document.getElementById('in-cmdline').value.trim(),
+      network: document.getElementById('in-network').checked,
+      autostart: document.getElementById('in-autostart').checked,
+      trusted: document.getElementById('in-trusted').checked,
+    });
+    ['in-name','in-pid','in-ppid','in-path','in-cpu','in-mem','in-cmdline'].forEach(id => document.getElementById(id).value='');
+    document.getElementById('in-signed').value = 'unknown';
+    document.getElementById('in-network').checked = false;
+    document.getElementById('in-autostart').checked = false;
+    document.getElementById('in-trusted').checked = false;
+    render();
+  });
+
+  // ---- heuristics ----
+  const SYSTEM_PROCESSES = {
+    'svchost.exe': ['\\windows\\system32','\\windows\\syswow64'],
+    'csrss.exe': ['\\windows\\system32'],
+    'wininit.exe': ['\\windows\\system32'],
+    'services.exe': ['\\windows\\system32'],
+    'lsass.exe': ['\\windows\\system32'],
+    'winlogon.exe': ['\\windows\\system32'],
+    'smss.exe': ['\\windows\\system32'],
+    'explorer.exe': ['\\windows'],
+    'taskhostw.exe': ['\\windows\\system32'],
+    'systemd': ['/lib/systemd','/usr/lib/systemd','/sbin'],
+    'launchd': ['/sbin'],
+  };
+  const SUSPICIOUS_DIR_RE = /\\temp\\|\\appdata\\local\\temp|\\downloads\\|\\users\\public\\|\/tmp\/|\/dev\/shm\/|\/var\/tmp\/|\\programdata\\(?!.*microsoft)/i;
+  const LOLBIN_MARKERS = [
+    { re:/-enc(odedcommand)?\s/i, label:'encoded PowerShell payload' },
+    { re:/downloadstring|downloadfile/i, label:'remote download cmdlet' },
+    { re:/iex\s*\(|invoke-expression/i, label:'dynamic script execution (IEX)' },
+    { re:/certutil.*-decode/i, label:'certutil used as a decoder' },
+    { re:/regsvr32.*scrobj/i, label:'regsvr32 script-execution abuse' },
+    { re:/mshta\s+https?:/i, label:'mshta fetching a remote payload' },
+    { re:/bitsadmin.*\/transfer/i, label:'BITS job used to fetch a file' },
+  ];
+
+  function evaluateProcess(proc, all){
+    const findings = [];
+    let score = 100;
+    const nameLower = (proc.name||'').toLowerCase();
+    const pathLower = (proc.path||'').toLowerCase();
+
+    if(proc.trusted){
+      findings.push({ sev:'ok', title:'Marked known‑good', body:'This process was baselined by the analyst; automated path and signature checks are suppressed for it.', fix:'No action needed unless new evidence emerges.' });
+      return { score:95, sev:'ok', findings };
+    }
+
+    if(SYSTEM_PROCESSES[nameLower] && pathLower){
+      const expected = SYSTEM_PROCESSES[nameLower];
+      if(!expected.some(p => pathLower.includes(p))){
+        findings.push({ sev:'crit', title:'Possible system-process masquerading',
+          body: '"' + proc.name + '" matches a well-known system process name but is running from ' + proc.path + ', not its expected location. Malware frequently reuses legitimate process names to blend into a process list.',
+          fix:'Verify the file hash and digital signature before assuming this is malicious. If unconfirmed, isolate the host and do not simply kill‑and‑forget — capture the binary for analysis first.' });
+        score -= 45;
+      }
+    }
+
+    if(pathLower && SUSPICIOUS_DIR_RE.test(pathLower)){
+      const sevHere = (proc.signed === 'unsigned') ? 'crit' : 'warn';
+      findings.push({ sev: sevHere, title:'Running from a suspicious directory',
+        body: 'The executable path (' + proc.path + ') is in a commonly-abused, world-writable location (temp, downloads, appdata, /tmp). Legitimate long‑running processes rarely launch from here.',
+        fix:'Confirm what installed this and why. If unexpected, terminate it and remove the binary — command: ' + killCmd(proc.pid) + '. Then check autostart locations for a matching persistence entry.' });
+      score -= (sevHere==='crit' ? 35 : 18);
+    } else if(proc.signed === 'unsigned'){
+      findings.push({ sev:'warn', title:'Unsigned binary',
+        body:'No digital signature was recorded for this process. Unsigned code isn\u2019t automatically malicious, but it can\u2019t be verified against a publisher.',
+        fix:'Check the binary\u2019s hash against a threat-intel source (e.g. VirusTotal) before deciding whether to remove it.' });
+      score -= 12;
+    }
+
+    if(proc.cmdline){
+      LOLBIN_MARKERS.forEach(marker => {
+        if(marker.re.test(proc.cmdline)){
+          findings.push({ sev:'crit', title:'Living-off-the-land indicator in command line',
+            body:'The command line matches a pattern associated with ' + marker.label + ', a technique used to run malicious code through a trusted, built-in system binary.',
+            fix:'Treat as high priority. Preserve the command line and a process memory capture for investigation before termination. Command: ' + killCmd(proc.pid) + '.' });
+          score -= 40;
+        }
+      });
+    }
+
+    if(proc.cpu && Number(proc.cpu) >= 85){
+      findings.push({ sev:'warn', title:'Sustained high CPU usage',
+        body:'CPU usage of ' + proc.cpu + '% is a resource outlier worth reviewing — could be legitimate load, or something like cryptomining/brute-forcing.',
+        fix:'Check whether this level of usage is expected for this process. If not, investigate before killing, since terminating it may lose forensic value.' });
+      score -= 10;
+    }
+
+    if(proc.network && pathLower && SUSPICIOUS_DIR_RE.test(pathLower)){
+      findings.push({ sev:'crit', title:'Network activity from a suspicious-path process',
+        body:'This process both runs from a suspicious directory and has an active network connection — a common profile for a dropper or command-and-control implant.',
+        fix:'Isolate the host from the network before further investigation. Capture the connection\u2019s remote address if possible, then: ' + killCmd(proc.pid) + '.' });
+      score -= 30;
+    }
+
+    if(proc.autostart && (proc.signed === 'unsigned' || (pathLower && SUSPICIOUS_DIR_RE.test(pathLower)))){
+      findings.push({ sev:'crit', title:'Persistence on an unverified binary',
+        body:'This process is configured to start automatically and is either unsigned or launching from a suspicious path — a common persistence pattern for malware.',
+        fix:'Locate and remove the autostart entry (Task Scheduler / Registry Run key on Windows, LaunchAgents/LaunchDaemons on macOS, systemd/cron on Linux) in addition to handling the running process.' });
+      score -= 30;
+    }
+
+    const dupPid = all.filter(p => p.id !== proc.id && p.name.toLowerCase() === nameLower && p.pid === proc.pid && proc.pid !== '—');
+    if(dupPid.length){
+      findings.push({ sev:'warn', title:'Duplicate PID logged',
+        body:'Another entry shares this PID. If these represent the same real process, remove the duplicate; if not, PID reuse can make records ambiguous.',
+        fix:'Confirm both entries against a fresh process listing.' });
+      score -= 8;
+    }
+
+    if(!findings.length){
+      findings.push({ sev:'ok', title:'No anomalies detected', body:'Nothing in the logged fields matches a known suspicious pattern.', fix:'No action needed. Re-check periodically as new information becomes available.' });
+    }
+
+    let worstSev = 'ok';
+    findings.forEach(f => { if(f.sev==='crit') worstSev='crit'; else if(f.sev==='warn' && worstSev!=='crit') worstSev='warn'; });
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    return { score, sev: worstSev, findings };
+  }
+
+  // ---- investigation & remediation kit ----
+  function buildKit(proc){
+    const path = proc.path || '<path-to-binary>';
+    const pid = proc.pid;
+    const name = proc.name;
+    if(state.remediationOS === 'windows'){
+      return {
+        investigate: [
+          { label:'Hash the binary', cmd:'Get-FileHash "' + path + '"' },
+          { label:'Check digital signature', cmd:'Get-AuthenticodeSignature "' + path + '"' },
+          { label:'List network connections', cmd:'Get-NetTCPConnection -OwningProcess ' + pid },
+          { label:'Check autostart entries', cmd:'Get-CimInstance Win32_StartupCommand | Where-Object { $_.Command -like "*' + name + '*" }' },
+        ],
+        remediate: [ { label:'Terminate process', cmd:'taskkill /PID ' + pid + ' /F' } ],
+      };
+    }
+    return {
+      investigate: [
+        { label:'Hash the binary', cmd:'sha256sum "' + path + '"' },
+        { label:'Check code signature (macOS)', cmd:'codesign -dv --verbose=4 "' + path + '"' },
+        { label:'List open files & network handles', cmd:'lsof -p ' + pid },
+        { label:'Check autostart entries', cmd:'crontab -l; ls -la ~/Library/LaunchAgents /Library/LaunchDaemons 2>/dev/null; systemctl list-units --type=service 2>/dev/null | grep -i ' + name },
+      ],
+      remediate: [ { label:'Terminate process', cmd:'kill -9 ' + pid } ],
+    };
+  }
+
+  function kitRowHtml(proc){
+    const kit = buildKit(proc);
+    const line = item => '<div class="kit-line"><span class="kit-label">' + escapeHtml(item.label) + '</span><code>' + escapeHtml(item.cmd) + '</code><button class="icon-btn copy" data-kitcopy="' + escapeHtml(item.cmd) + '" title="Copy">⧉</button></div>';
+    return '<tr class="kit-row"><td colspan="7"><div class="kit-box">' +
+      '<div class="kit-section-label">Investigate before acting</div>' + kit.investigate.map(line).join('') +
+      '<div class="kit-section-label">Remediate</div>' + kit.remediate.map(line).join('') +
+    '</div></td></tr>';
+  }
+
+  // ---- scan file import (drag & drop / browse) ----
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  document.getElementById('browseBtn').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => { if(e.target.files[0]) readScanFile(e.target.files[0]); });
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(file) readScanFile(file);
+  });
+  function readScanFile(file){
+    const reader = new FileReader();
+    reader.onload = ev => {
+      document.getElementById('in-scanpaste').value = ev.target.result;
+      document.getElementById('importBtn').click();
+    };
+    reader.onerror = () => setImportStatus('Could not read "' + file.name + '".', 'crit');
+    reader.readAsText(file);
+  }
+
+  // ---- render ----
+  function render(){
+    const tbody = document.getElementById('procTableBody');
+    const findingsList = document.getElementById('findingsList');
+
+    if(state.processes.length === 0){
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No processes logged yet — import a scan or add one above.</td></tr>';
+      findingsList.innerHTML = '<div class="finding ok"><div class="sev">Info</div><div><h4>No findings yet</h4><p>Add or import processes above to generate findings.</p></div></div>';
+      updateSummary([]);
+      return;
+    }
+
+    let rowsHtml = '';
+    let allFindings = [];
+    const evalCache = [];
+
+    state.processes.forEach(proc => {
+      const result = evaluateProcess(proc, state.processes);
+      evalCache.push({ proc, result });
+
+      rowsHtml += '<tr>' +
+        '<td class="proc-cell">' + escapeHtml(proc.name) + (proc.trusted ? '<span class="badge-trust">KNOWN-GOOD</span>' : '') + '</td>' +
+        '<td class="path-cell">' + escapeHtml(proc.pid) + (proc.ppid ? ' / ' + escapeHtml(proc.ppid) : '') + '</td>' +
+        '<td class="path-cell">' + (proc.path ? escapeHtml(proc.path) : '—') + '</td>' +
+        '<td>' + (proc.signed==='signed' ? '<span class="badge ok">Signed</span>' : proc.signed==='unsigned' ? '<span class="badge crit">Unsigned</span>' : '<span class="badge warn">Unknown</span>') + '</td>' +
+        '<td class="path-cell">' + (proc.cpu ? proc.cpu+'%' : '—') + ' / ' + (proc.mem ? proc.mem+'MB' : '—') + '</td>' +
+        '<td><span class="badge ' + result.sev + '">' + (result.sev==='crit'?'Critical':result.sev==='warn'?'Warning':'Pass') + ' · ' + result.score + '</span></td>' +
+        '<td class="row-actions">' +
+          '<button class="icon-btn' + (proc.trusted?' trusted':'') + '" data-trust="' + proc.id + '" title="Toggle known-good">' + (proc.trusted?'★':'☆') + '</button>' +
+          '<button class="icon-btn' + (state.expanded.has(proc.id)?' trusted':'') + '" data-toggle="' + proc.id + '" title="Show investigation &amp; remediation kit">🧰</button>' +
+          '<button class="icon-btn copy" data-copy="' + proc.id + '" title="Copy remediation command">⧉</button>' +
+          '<button class="icon-btn" data-remove="' + proc.id + '" title="Remove">✕</button>' +
+        '</td>' +
+      '</tr>';
+
+      if(state.expanded.has(proc.id)){
+        rowsHtml += kitRowHtml(proc);
+      }
+
+      result.findings.forEach(f => {
+        allFindings.push({ sev:f.sev, html:
+          '<div class="finding ' + f.sev + '">' +
+            '<div class="sev">' + (f.sev==='crit'?'Critical':f.sev==='warn'?'Warning':'Pass') + '</div>' +
+            '<div><h4>' + escapeHtml(f.title) + '</h4>' +
+              '<p>' + escapeHtml(f.body) + '</p>' +
+              '<div class="remediation"><span><b>Remediation —</b> ' + escapeHtml(f.fix) + '</span></div>' +
+              '<div class="net-ref">Process: ' + escapeHtml(proc.name) + ' · PID ' + escapeHtml(proc.pid) + '</div>' +
+            '</div>' +
+          '</div>'
+        });
+      });
+    });
+
+    tbody.innerHTML = rowsHtml;
+
+    const sevOrder = { crit:0, warn:1, ok:2 };
+    allFindings.sort((a,b) => sevOrder[a.sev]-sevOrder[b.sev]);
+    findingsList.innerHTML = allFindings.map(f=>f.html).join('') || '<div class="finding ok"><div class="sev">Info</div><div><h4>No findings</h4><p>Nothing to report.</p></div></div>';
+
+    document.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => { state.processes = state.processes.filter(p => p.id !== btn.getAttribute('data-remove')); render(); });
+    });
+    document.querySelectorAll('[data-trust]').forEach(btn => {
+      btn.addEventListener('click', () => { const p = state.processes.find(p => p.id === btn.getAttribute('data-trust')); if(p){ p.trusted = !p.trusted; render(); } });
+    });
+    document.querySelectorAll('[data-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-toggle');
+        if(state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+        render();
+      });
+    });
+    document.querySelectorAll('[data-kitcopy]').forEach(btn => {
+      btn.addEventListener('click', function(){ copyText(btn.getAttribute('data-kitcopy'), this); });
+    });
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', function(){
+        const p = state.processes.find(p => p.id === btn.getAttribute('data-copy'));
+        if(p) copyText(killCmd(p.pid), this);
+      });
+    });
+
+    updateSummary(evalCache);
+  }
+
+  function updateSummary(evalCache){
+    const crit = evalCache.filter(e => e.result.sev==='crit').length;
+    const warn = evalCache.filter(e => e.result.sev==='warn').length;
+    const ok = evalCache.filter(e => e.result.sev==='ok').length;
+    const total = evalCache.length;
+
+    document.getElementById('critCount').textContent = crit;
+    document.getElementById('warnCount').textContent = warn;
+    document.getElementById('okCount').textContent = ok;
+    document.getElementById('critBar').style.width = total ? (crit/total*100)+'%' : '0%';
+    document.getElementById('warnBar').style.width = total ? (warn/total*100)+'%' : '0%';
+    document.getElementById('okBar').style.width = total ? (ok/total*100)+'%' : '0%';
+
+    const avg = total ? Math.round(evalCache.reduce((s,e)=>s+e.result.score,0)/total) : 0;
+    const circumference = 490;
+    const offset = total ? circumference - (avg/100*circumference) : circumference;
+    const fg = document.getElementById('gaugeFg');
+    fg.style.strokeDashoffset = offset;
+    fg.style.stroke = avg >= 80 ? '#4FD69C' : avg >= 50 ? '#E8A23F' : '#E8536E';
+    document.getElementById('gaugeNum').textContent = total ? avg : '--';
+    document.getElementById('gaugeNum').style.color = avg >= 80 ? '#4FD69C' : avg >= 50 ? '#E8A23F' : '#E8536E';
+  }
+
+  // ---- report ----
+  function buildReportText(){
+    const now = new Date();
+    let lines = [];
+    lines.push('SUSPICIOUS PROCESS AUDIT REPORT');
+    lines.push('Generated: ' + now.toLocaleString());
+    lines.push('Processes audited: ' + state.processes.length);
+    lines.push('='.repeat(60)); lines.push('');
+
+    const evalCache = state.processes.map(proc => ({ proc, result: evaluateProcess(proc, state.processes) }));
+    const crit = evalCache.filter(e => e.result.sev==='crit').length;
+    const warn = evalCache.filter(e => e.result.sev==='warn').length;
+    const ok = evalCache.filter(e => e.result.sev==='ok').length;
+    const avg = evalCache.length ? Math.round(evalCache.reduce((s,e)=>s+e.result.score,0)/evalCache.length) : 0;
+
+    lines.push('SUMMARY');
+    lines.push('-'.repeat(60));
+    lines.push('Fleet threat score : ' + avg + ' / 100');
+    lines.push('Critical           : ' + crit);
+    lines.push('Warnings           : ' + warn);
+    lines.push('Clean              : ' + ok);
+    lines.push('');
+    lines.push('PROCESS INVENTORY');
+    lines.push('-'.repeat(60));
+    evalCache.forEach(({proc, result}) => {
+      lines.push('Process: ' + proc.name + (proc.trusted ? '  [KNOWN-GOOD]' : ''));
+      lines.push('  PID: ' + proc.pid + '   PPID: ' + (proc.ppid || '—') + '   Signature: ' + proc.signed);
+      lines.push('  Path: ' + (proc.path || '—'));
+      if(proc.cmdline) lines.push('  Command line: ' + proc.cmdline);
+      lines.push('  CPU: ' + (proc.cpu || '—') + '%   Mem: ' + (proc.mem || '—') + 'MB   Network: ' + (proc.network?'Yes':'No') + '   Autostart: ' + (proc.autostart?'Yes':'No'));
+      lines.push('  Rating: ' + result.sev.toUpperCase() + '  (score ' + result.score + '/100)');
+      lines.push('');
+    });
+
+    lines.push('FINDINGS & REMEDIATION');
+    lines.push('-'.repeat(60));
+    let allFindings = [];
+    evalCache.forEach(({proc, result}) => result.findings.forEach(f => allFindings.push({proc, f})));
+    const sevOrder = { crit:0, warn:1, ok:2 };
+    allFindings.sort((a,b) => sevOrder[a.f.sev]-sevOrder[b.f.sev]);
+    allFindings.forEach(({proc, f}) => {
+      lines.push('[' + f.sev.toUpperCase() + '] ' + f.title + '  (Process: ' + proc.name + ', PID ' + proc.pid + ')');
+      lines.push('  Finding:     ' + f.body);
+      lines.push('  Remediation: ' + f.fix);
+      lines.push('');
+    });
+    if(!allFindings.length) lines.push('No findings recorded.');
+
+    return lines.join('\n');
+  }
+
+  document.getElementById('genReportBtn').addEventListener('click', () => {
+    if(state.processes.length === 0){ document.getElementById('reportOutput').textContent = 'Add at least one process before generating a report.'; return; }
+    document.getElementById('reportOutput').textContent = buildReportText();
+  });
+
+  document.getElementById('downloadReportBtn').addEventListener('click', () => {
+    if(state.processes.length === 0){ alert('Add at least one process first.'); return; }
+    const text = buildReportText();
+    const blob = new Blob([text], { type:'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'suspicious-process-audit-report.txt';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+  render();
+})();
+</script>
+</body>
+</html>
